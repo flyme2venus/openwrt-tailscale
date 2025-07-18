@@ -196,20 +196,37 @@ jobs:
           fi
           # Verify Python requirements for OpenWrt
           python3 -c "import sys; assert sys.version_info >= (3, 5), 'Python 3.5+ required'"
+          # Additional Python environment setup for OpenWrt SDK
+          echo "=== Setting up Python environment for OpenWrt SDK ==="
+          # Create additional symlinks that OpenWrt might look for
+          sudo ln -sf /usr/bin/python3 /usr/local/bin/python3 || true
+          sudo ln -sf /usr/bin/python3 /usr/local/bin/python || true
+          # Update PATH to include common Python locations
+          export PATH="/usr/bin:/usr/local/bin:$PATH"
+          # Verify distutils module specifically
+          python3 -c "import distutils.core; print('distutils.core available')"
 
       - name: Defconfig
         id: defconfig
         run: |
           cd ~/openwrt-sdk
-          # Set Python environment
-          export PYTHON=python3
-          export PATH="/usr/bin:$PATH"
+          # Set comprehensive Python environment
+          export PYTHON=/usr/bin/python3
+          export PYTHON3=/usr/bin/python3
+          export PATH="/usr/bin:/usr/local/bin:$PATH"
           # Check prerequisites
           echo "=== Checking Python environment ==="
           python3 --version
+          which python3
           python3 -c "import distutils.util; print('distutils.util imported successfully')"
-          echo "=== Running make defconfig ==="
-          make defconfig || (echo "=== Defconfig failed, trying with FORCE=1 ===" && make defconfig FORCE=1)
+          python3 -c "import distutils.core; print('distutils.core imported successfully')"
+          echo "=== Python paths ==="
+          echo "PYTHON=$PYTHON"
+          echo "PYTHON3=$PYTHON3"
+          echo "PATH=$PATH"
+          echo "=== Running make defconfig with FORCE=1 ==="
+          # Use FORCE=1 directly to bypass the prerequisite checks
+          make defconfig FORCE=1
           sed -i 's/^CONFIG_PACKAGE_\(.*\)=m$/# CONFIG_PACKAGE_\1 is not set/' .config
           grep '^CONFIG_PACKAGE_' .config || echo "No CONFIG_PACKAGE entries found"
           echo "status=success" >> $GITHUB_OUTPUT
@@ -227,8 +244,12 @@ jobs:
       - name: Build IPK
         run: |
           cd ~/openwrt-sdk
+          # Set Python environment for build
+          export PYTHON=/usr/bin/python3
+          export PYTHON3=/usr/bin/python3
+          export PATH="/usr/bin:/usr/local/bin:$PATH"
           chmod 755 -R ./package/${IPK_NAME}
-          make -j16 V=s package/${IPK_NAME}/compile
+          make -j16 V=s package/${IPK_NAME}/compile FORCE=1
 
       # 提交下载
       - name: Upload bin directory

@@ -1,5 +1,5 @@
 # 工作流程的名字
-# Build OpenWrt IPK packages
+# https://github.com/subosito/flutter-action
 name: build Openwrt Ipk
 on:
   workflow_dispatch:
@@ -48,34 +48,31 @@ jobs:
     steps:
       # 拉取项目代码
       - name: Checkout the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       # 安装 nodejs
+      # https://github.com/marketplace/actions/setup-node-js-environment
       - name: Setup Nodejs
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v3
 
       # 安装 pnpm
-      - name: Install pnpm
-        run: |
+      - run: |
           npm install pnpm -g
 
       # 打包 web 项目
-      - name: Build web project
-        run: |
+      - run: |
           cd web
           pnpm install
           pnpm run build
 
       # 复制 web至 luci
-      - name: Copy web assets to luci
-        run: |
-          mkdir -p ${IPK_NAME}/htdocs
+      - run: |
+          mkdir ${IPK_NAME}/htdocs
           cp -r web/dist/luci-static ${IPK_NAME}/htdocs
 
       # 写入版本号
-      - name: Update version
-        run: |
-          sed -i 's/PKG_VERSION:=\(.*\)/PKG_VERSION:=${{ inputs.version }}/g' ${IPK_NAME}/Makefile
+      - run: |
+          sed -i  's/PKG_VERSION:=\(.*\)/PKG_VERSION:=${{ inputs.version }}/g' ${IPK_NAME}/Makefile
 
       - name: Import Env
         env:
@@ -161,32 +158,27 @@ jobs:
           which python3
 
       - name: Download SDK
-        run: |
-          if [ -z "${SDK_URL}" ] || [ -z "${SDK_NAME}" ]; then
-            echo "Error: SDK_URL or SDK_NAME not defined"
-            exit 1
-          fi
-          wget ${SDK_URL}${SDK_NAME}.tar.xz
+        run: wget ${SDK_URL}${SDK_NAME}.tar.xz
 
       - name: Unpack SDK
         run: |
-          mkdir -p ~/openwrt-sdk
-          tar -xJf ${SDK_NAME}.tar.xz --strip-components=1 -C ~/openwrt-sdk
+          mkdir ~/openwrt-sdk
+          tar -xJf `pwd`/${SDK_NAME}.tar.xz --strip-components=1 -C ~/openwrt-sdk
           ln -s ${HOME}/openwrt-sdk ${SDK_NAME}
 
       - name: Clean Code
         run: |
-          rm -f ${SDK_NAME}/package/linux/modules/* || true
-          rm -f ${SDK_NAME}/package/kernel/linux/modules/* || true
+          rm -f ${SDK_NAME}/package/linux/modules/*
+          rm -f ${SDK_NAME}/package/kernel/linux/modules/*
           grep -lFr '$(call KernelPackage,' ${SDK_NAME}/package/linux | xargs -rn1 sed -i 's/ FILES:=/ XFILES:=/g' || true
           grep -lFr '$(call KernelPackage,' ${SDK_NAME}/package/kernel | xargs -rn1 sed -i 's/ FILES:=/ XFILES:=/g' || true
           find ${SDK_NAME}/target/linux -name 'modules.mk' | xargs -rn1 sed -i 's/ FILES:=/ XFILES:=/g' || true
-          grep 'src-git base ' ${SDK_NAME}/feeds.conf.default > ${SDK_NAME}/feeds.conf || true
-          grep 'src-git luci ' ${SDK_NAME}/feeds.conf.default >> ${SDK_NAME}/feeds.conf || true
+          grep 'src-git base ' ${SDK_NAME}/feeds.conf.default > ${SDK_NAME}/feeds.conf
+          grep 'src-git luci ' ${SDK_NAME}/feeds.conf.default >> ${SDK_NAME}/feeds.conf
 
       - name: Write Config
         run: |
-          cat > ${SDK_NAME}/.config << 'EOF'
+          cat <<EOF >${SDK_NAME}/.config
           # CONFIG_SIGNED_PACKAGES is not set
           CONFIG_LUCI_LANG_zh_Hans=y
           CONFIG_LUCI_LANG_zh-cn=y
@@ -232,56 +224,22 @@ jobs:
           echo "PYTHON=$PYTHON"
           echo "PYTHON3=$PYTHON3"
           echo "PATH=$PATH"
-          echo "=== Examining SDK structure ==="
-          ls -la include/
-          echo "=== Finding and patching prerequisite checks ==="
-          # Find all files that might contain Python checks
-          find . -name "*.mk" -exec grep -l "TestHostCommand.*python" {} \; | head -10
-          find . -name "*.mk" -exec grep -l "Please install Python" {} \; | head -10
-          # More comprehensive patching
-          find . -name "*.mk" -exec sed -i 's/$(eval $(call TestHostCommand,python,.*))$/# &/' {} \; 2>/dev/null || true
-          find . -name "*.mk" -exec sed -i 's/$(eval $(call TestHostCommand,python3,.*))$/# &/' {} \; 2>/dev/null || true
-          find . -name "*.mk" -exec sed -i 's/$(eval $(call TestHostCommand,python3-distutils,.*))$/# &/' {} \; 2>/dev/null || true
-          # Also try to patch any scripts that might check Python
-          find . -name "*.sh" -exec sed -i 's/python3 -c "import distutils"/# python3 -c "import distutils"/' {} \; 2>/dev/null || true
-          echo "=== Creating fake Python scripts ==="
-          # Create fake Python executables that always succeed
-          mkdir -p staging_dir/host/bin
-          cat > staging_dir/host/bin/python3 << 'EOF'
-#!/bin/bash
-if [[ "$*" == *"import distutils"* ]]; then
-    echo "distutils available"
-    exit 0
-fi
-exec /usr/bin/python3 "$@"
-EOF
-          chmod +x staging_dir/host/bin/python3
-          ln -sf python3 staging_dir/host/bin/python
-          export PATH="$(pwd)/staging_dir/host/bin:$PATH"
-          echo "=== Running make defconfig ==="
-          # Use FORCE=1 and set additional variables
-          make defconfig FORCE=1 || make defconfig V=s FORCE=1 || true
-          sed -i 's/^CONFIG_PACKAGE_\(.*\)=m$/# CONFIG_PACKAGE_\1 is not set/' .config || true
+          echo "=== Running make defconfig with FORCE=1 ==="
+          # Use FORCE=1 directly to bypass the prerequisite checks
+          make defconfig FORCE=1
+          sed -i 's/^CONFIG_PACKAGE_\(.*\)=m$/# CONFIG_PACKAGE_\1 is not set/' .config
           grep '^CONFIG_PACKAGE_' .config || echo "No CONFIG_PACKAGE entries found"
           echo "status=success" >> $GITHUB_OUTPUT
 
-      - name: Install feeds
+      - name: "Install"
         run: |
           cd ~/openwrt-sdk
-          # Set Python environment
-          export PYTHON=/usr/bin/python3
-          export PYTHON3=/usr/bin/python3
-          export PATH="/usr/bin:/usr/local/bin:$PATH"
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: Copy Package
         run: |
-          if [ ! -d "./${IPK_NAME}" ]; then
-            echo "Error: Package directory ${IPK_NAME} not found"
-            exit 1
-          fi
-          cp -r ./${IPK_NAME}/ ~/openwrt-sdk/package/
+          cp -r ./${IPK_NAME}/ ~/openwrt-sdk/package
 
       - name: Build IPK
         run: |
@@ -291,14 +249,11 @@ EOF
           export PYTHON3=/usr/bin/python3
           export PATH="/usr/bin:/usr/local/bin:$PATH"
           chmod 755 -R ./package/${IPK_NAME}
-          echo "=== Building IPK package ==="
-          make -j16 V=s package/${IPK_NAME}/compile FORCE=1 || make -j1 V=s package/${IPK_NAME}/compile FORCE=1
+          make -j16 V=s package/${IPK_NAME}/compile FORCE=1
 
       # 提交下载
       - name: Upload bin directory
-        if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@main
         with:
-          name: ${{ matrix.target }}-${{ inputs.version }}
-          path: ~/openwrt-sdk/bin/packages/${{ env.SDK_ARCH }}
-          retention-days: 30
+          name: ${{ env.SDK_ARCH }}
+          path: ${{ env.SDK_NAME }}/bin/packages/${{ env.SDK_ARCH }}
